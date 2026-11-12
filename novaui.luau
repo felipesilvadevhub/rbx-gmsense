@@ -16,6 +16,7 @@ local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 local HttpService = game:GetService("HttpService")
 
 local Library = {
@@ -121,14 +122,6 @@ end
 
 local function mouse()
 	return UserInputService:GetMouseLocation()
-end
-
-local function inside(gui, point)
-	if not gui or not gui.Visible then
-		return false
-	end
-	local p, s = gui.AbsolutePosition, gui.AbsoluteSize
-	return point.X >= p.X and point.X <= p.X + s.X and point.Y >= p.Y and point.Y <= p.Y + s.Y
 end
 
 -- Chama onMove a cada movimento ate soltar o botao.
@@ -578,16 +571,7 @@ function Element:AddColorPicker(opts)
 	corner(swatch, 3)
 	stroke(swatch, Theme.Border)
 
-	local popup = create("Frame", {
-		Name = "ColorPopup",
-		Visible = false,
-		Size = UDim2.fromOffset(192, 168),
-		BackgroundColor3 = Theme.Panel,
-		BorderSizePixel = 0,
-		Parent = window.PopupLayer,
-	})
-	corner(popup, 6)
-	stroke(popup, Theme.Border)
+	local popup = window:_newPopup("ColorPopup", { Size = UDim2.fromOffset(192, 168) })
 
 	local sv = create("TextButton", {
 		Position = UDim2.fromOffset(8, 8),
@@ -742,17 +726,10 @@ function Element:AddSettings(opts)
 		tween(gear, { ImageColor3 = Theme.TextDim })
 	end)
 
-	local popup = create("Frame", {
-		Name = "SettingsPopup",
-		Visible = false,
+	local popup = window:_newPopup("SettingsPopup", {
 		Size = UDim2.fromOffset(opts.Width or 240, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
-		BackgroundColor3 = Theme.Panel,
-		BorderSizePixel = 0,
-		Parent = window.PopupLayer,
 	})
-	corner(popup, 6)
-	stroke(popup, Theme.Border)
 	padding(popup, 6, 6, 10, 10)
 	list(popup)
 
@@ -1039,22 +1016,52 @@ function Section:AddDropdown(opts)
 		Parent = btn,
 	})
 
-	local popup = create("Frame", {
-		Name = "DropdownPopup",
-		Visible = false,
+	local ITEM_HEIGHT = 24
+	local SEARCH_HEIGHT = 30
+
+	local popup = window:_newPopup("DropdownPopup", {
 		Size = UDim2.fromOffset(width, 0),
 		BackgroundColor3 = Theme.Element,
-		BorderSizePixel = 0,
-		Parent = window.PopupLayer,
+		ClipsDescendants = true,
 	})
-	corner(popup, 4)
-	stroke(popup, Theme.Border)
+
+	local searchHolder = create("Frame", {
+		Size = UDim2.new(1, 0, 0, SEARCH_HEIGHT),
+		BackgroundTransparency = 1,
+		Visible = false,
+		Parent = popup,
+	})
+	local searchBox = create("TextBox", {
+		Position = UDim2.fromOffset(4, 4),
+		Size = UDim2.new(1, -8, 0, 22),
+		BackgroundColor3 = Theme.Background,
+		BorderSizePixel = 0,
+		Font = FONT,
+		TextSize = 11,
+		TextColor3 = Theme.Text,
+		PlaceholderText = "Search...",
+		PlaceholderColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ClearTextOnFocus = false,
+		Text = "",
+		Parent = searchHolder,
+	})
+	corner(searchBox, 3)
+	padding(searchBox, 0, 0, 24, 6)
+	Library.Icon("search", 12, {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, -17, 0.5, 0),
+		ImageColor3 = Theme.TextDim,
+		Parent = searchBox,
+	})
+
 	local scroll = create("ScrollingFrame", {
 		Size = UDim2.fromScale(1, 1),
 		BackgroundTransparency = 1,
 		BorderSizePixel = 0,
 		ScrollBarThickness = 2,
 		ScrollBarImageColor3 = Theme.TextDim,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
 		CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		Parent = popup,
@@ -1062,7 +1069,26 @@ function Section:AddDropdown(opts)
 	padding(scroll, 4, 4, 4, 4)
 	list(scroll, 1)
 
+	local empty = text({
+		Size = UDim2.new(1, 0, 0, ITEM_HEIGHT),
+		Text = "No results",
+		TextSize = 11,
+		TextColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Visible = false,
+		LayoutOrder = 100000,
+		Parent = scroll,
+	})
+
 	local options = {}
+	local order = {}
+
+	local function searchEnabled()
+		if opts.Search ~= nil then
+			return opts.Search
+		end
+		return #el.Values > 8
+	end
 
 	local function isSelected(value)
 		if multi then
@@ -1074,9 +1100,54 @@ function Section:AddDropdown(opts)
 	local function paintOptions()
 		for value, item in pairs(options) do
 			local selected = isSelected(value)
-			item.Label.TextColor3 = selected and Theme.Accent or Theme.Text
+			item.Label.TextColor3 = selected and Theme.Text or Theme.TextDim
+			item.Label.Font = selected and FONT_BOLD or FONT
+			item.Bar.Visible = selected
+			item.Bar.BackgroundColor3 = Theme.Accent
 			item.Check.Visible = selected
 			item.Check.ImageColor3 = Theme.Accent
+		end
+	end
+
+	local function visibleCount()
+		local count = 0
+		for _, item in pairs(options) do
+			if item.Button.Visible then
+				count += 1
+			end
+		end
+		return count
+	end
+
+	local function targetHeight()
+		local top = searchEnabled() and SEARCH_HEIGHT or 0
+		local count = math.max(visibleCount(), 1)
+		return math.min(top + count * (ITEM_HEIGHT + 1) + 8, opts.MaxHeight or 210)
+	end
+
+	local function filter(query)
+		query = string.lower(query or "")
+		for value, item in pairs(options) do
+			item.Button.Visible = query == "" or string.find(string.lower(tostring(value)), query, 1, true) ~= nil
+		end
+		empty.Visible = visibleCount() == 0
+	end
+
+	local function choose(value)
+		if multi then
+			local selected = table.clone(el.Value or {})
+			local at = table.find(selected, value)
+			if at then
+				table.remove(selected, at)
+			else
+				table.insert(selected, value)
+			end
+			el:Set(selected)
+		elseif opts.AllowNone and el.Value == value then
+			el:Set(nil)
+		else
+			el:Set(value)
+			window:_closePopup(popup)
 		end
 	end
 
@@ -1085,9 +1156,10 @@ function Section:AddDropdown(opts)
 			item.Button:Destroy()
 		end
 		table.clear(options)
+		table.clear(order)
 		for index, value in ipairs(el.Values) do
 			local optBtn = create("TextButton", {
-				Size = UDim2.new(1, 0, 0, 22),
+				Size = UDim2.new(1, 0, 0, ITEM_HEIGHT),
 				BackgroundColor3 = Theme.ElementHover,
 				BackgroundTransparency = 1,
 				BorderSizePixel = 0,
@@ -1097,9 +1169,19 @@ function Section:AddDropdown(opts)
 				Parent = scroll,
 			})
 			corner(optBtn, 3)
+			local bar = create("Frame", {
+				AnchorPoint = Vector2.new(0, 0.5),
+				Position = UDim2.new(0, 0, 0.5, 0),
+				Size = UDim2.fromOffset(2, 12),
+				BackgroundColor3 = Theme.Accent,
+				BorderSizePixel = 0,
+				Visible = false,
+				Parent = optBtn,
+			})
+			corner(bar, 1)
 			local optLabel = text({
-				Position = UDim2.fromOffset(8, 0),
-				Size = UDim2.new(1, -28, 1, 0),
+				Position = UDim2.fromOffset(9, 0),
+				Size = UDim2.new(1, -30, 1, 0),
 				Text = tostring(value),
 				TextSize = 11,
 				TextTruncate = Enum.TextTruncate.AtEnd,
@@ -1112,31 +1194,45 @@ function Section:AddDropdown(opts)
 				Parent = optBtn,
 			})
 			optBtn.MouseEnter:Connect(function()
-				tween(optBtn, { BackgroundTransparency = 0 }, 0.1)
+				tween(optBtn, { BackgroundTransparency = 0 }, 0.08)
 			end)
 			optBtn.MouseLeave:Connect(function()
-				tween(optBtn, { BackgroundTransparency = 1 }, 0.1)
+				tween(optBtn, { BackgroundTransparency = 1 }, 0.08)
 			end)
 			optBtn.Activated:Connect(function()
-				if multi then
-					local selected = table.clone(el.Value or {})
-					local at = table.find(selected, value)
-					if at then
-						table.remove(selected, at)
-					else
-						table.insert(selected, value)
-					end
-					el:Set(selected)
-				else
-					el:Set(value)
-					window:_closePopup(popup)
-				end
+				choose(value)
 			end)
-			options[value] = { Button = optBtn, Label = optLabel, Check = check }
+			options[value] = { Button = optBtn, Label = optLabel, Check = check, Bar = bar }
+			table.insert(order, value)
 		end
-		popup.Size = UDim2.fromOffset(width, math.min(#el.Values * 23 + 8, opts.MaxHeight or 180))
+		filter(searchBox.Text)
 		paintOptions()
 	end
+
+	local function layoutPopup()
+		local top = searchEnabled() and SEARCH_HEIGHT or 0
+		searchHolder.Visible = top > 0
+		scroll.Position = UDim2.fromOffset(0, top)
+		scroll.Size = UDim2.new(1, 0, 1, -top)
+	end
+
+	searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+		filter(searchBox.Text)
+		if popup.Visible then
+			tween(popup, { Size = UDim2.fromOffset(width, targetHeight()) }, 0.1)
+		end
+	end)
+	searchBox.FocusLost:Connect(function(enter)
+		if not enter then
+			return
+		end
+		for _, value in ipairs(order) do
+			if options[value].Button.Visible then
+				choose(value)
+				break
+			end
+		end
+	end)
 
 	el._normalize = function(value)
 		if multi then
@@ -1179,11 +1275,22 @@ function Section:AddDropdown(opts)
 		tween(btn, { BackgroundColor3 = Theme.Element }, 0.1)
 	end)
 	btn.Activated:Connect(function()
-		if el._enabled then
-			window:_togglePopup(popup, btn, "Below", function(open)
-				tween(chevron, { Rotation = open and 180 or 0 })
-			end)
+		if not el._enabled then
+			return
 		end
+		searchBox.Text = ""
+		layoutPopup()
+		filter("")
+		local height = targetHeight()
+		popup.Size = UDim2.fromOffset(width, height)
+		window:_togglePopup(popup, btn, "Below", function(open)
+			tween(chevron, { Rotation = open and 180 or 0 })
+			tween(btn, { BackgroundColor3 = open and Theme.ElementHover or Theme.Element }, 0.1)
+			if open then
+				popup.Size = UDim2.fromOffset(width, 0)
+				tween(popup, { Size = UDim2.fromOffset(width, height) }, 0.16)
+			end
+		end)
 	end)
 
 	window:_onAccent(paintOptions)
@@ -1382,6 +1489,10 @@ function Library:CreateWindow(opts)
 		_accentHooks = {},
 		_unload = {},
 		_locked = false,
+		_loading = false,
+		_unlockMouse = opts.UnlockMouse ~= false,
+		_renderName = "NovaUI_" .. HttpService:GenerateGUID(false),
+		_logoIcon = opts.Logo or "mountain",
 	}, Window)
 
 	local gui = create("ScreenGui", {
@@ -1411,6 +1522,17 @@ function Library:CreateWindow(opts)
 	corner(main, 8)
 	stroke(main, Theme.Border)
 	self.Main = main
+	self._scale = create("UIScale", { Parent = main })
+
+	-- Botao Modal: em primeira pessoa/shift-lock o Roblox solta o cursor enquanto ele esta visivel.
+	create("TextButton", {
+		Name = "Modal",
+		Modal = self._unlockMouse,
+		Size = UDim2.fromOffset(0, 0),
+		BackgroundTransparency = 1,
+		Text = "",
+		Parent = main,
+	})
 
 	-- Sidebar
 	local sidebar = create("Frame", {
@@ -1505,6 +1627,24 @@ function Library:CreateWindow(opts)
 		Parent = gui,
 	})
 
+	-- Camada invisivel atras dos popups: clicar fora fecha tudo sem depender da posicao do mouse.
+	self._blocker = create("TextButton", {
+		Name = "Blocker",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		AutoButtonColor = false,
+		Text = "",
+		Visible = false,
+		ZIndex = 1,
+		Parent = self.PopupLayer,
+	})
+	self._blocker.MouseButton1Down:Connect(function()
+		self:_closePopups(0)
+	end)
+	self._blocker.MouseButton2Down:Connect(function()
+		self:_closePopups(0)
+	end)
+
 	self._notifications = create("Frame", {
 		Name = "Notifications",
 		AnchorPoint = Vector2.new(1, 1),
@@ -1532,19 +1672,10 @@ function Library:CreateWindow(opts)
 		end)
 	end
 
-	-- Fecha popups ao clicar fora e alterna o menu pela tecla
 	self:_connect(UserInputService.InputBegan:Connect(function(input, processed)
-		if isPress(input) and #self._popups > 0 then
-			local pos = mouse()
-			local keep = 0
-			for i = #self._popups, 1, -1 do
-				local popup = self._popups[i]
-				if inside(popup.Frame, pos) or inside(popup.Anchor, pos) then
-					keep = i
-					break
-				end
-			end
-			self:_closePopups(keep)
+		if input.KeyCode == Enum.KeyCode.Escape and #self._popups > 0 then
+			self:_closePopups(0)
+			return
 		end
 		if not processed and self.ToggleKey and input.KeyCode == self.ToggleKey then
 			self:Toggle()
@@ -1572,7 +1703,217 @@ function Library:CreateWindow(opts)
 	end
 
 	table.insert(Library.Windows, self)
+
+	if opts.Loading then
+		self:_runLoader(opts.Loading)
+	else
+		self:_setMouseFree(true)
+	end
 	return self
+end
+
+function Window:_setMouseFree(free)
+	if not self._unlockMouse then
+		return
+	end
+	if free and not self._mouseBound then
+		self._mouseBound = true
+		self._prevMouseIcon = UserInputService.MouseIconEnabled
+		RunService:BindToRenderStep(self._renderName, Enum.RenderPriority.Last.Value + 1, function()
+			UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+			UserInputService.MouseIconEnabled = true
+		end)
+	elseif not free and self._mouseBound then
+		self._mouseBound = false
+		pcall(RunService.UnbindFromRenderStep, RunService, self._renderName)
+		if self._prevMouseIcon ~= nil then
+			UserInputService.MouseIconEnabled = self._prevMouseIcon
+		end
+	end
+end
+
+function Window:_runLoader(cfg)
+	cfg = type(cfg) == "table" and cfg or {}
+	self._loading = true
+	self.Main.Visible = false
+
+	local gui = self.Gui
+	local backdrop = create("Frame", {
+		Name = "LoadingBackdrop",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ZIndex = 80,
+		Parent = gui,
+	})
+	local card = create("CanvasGroup", {
+		Name = "Loading",
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(320, 176),
+		BackgroundColor3 = Theme.Background,
+		BorderSizePixel = 0,
+		GroupTransparency = 1,
+		ZIndex = 81,
+		Parent = gui,
+	})
+	corner(card, 10)
+	stroke(card, Theme.Border)
+	local scale = create("UIScale", { Scale = 0.9, Parent = card })
+
+	local glow = create("Frame", {
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 20),
+		Size = UDim2.fromOffset(52, 52),
+		BackgroundColor3 = Theme.Accent,
+		BackgroundTransparency = 0.85,
+		BorderSizePixel = 0,
+		Parent = card,
+	})
+	corner(glow, 12)
+	local logo = Library.Icon(cfg.Icon or self._logoIcon, 28, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		ImageColor3 = Theme.Accent,
+		Parent = glow,
+	})
+	text({
+		Position = UDim2.fromOffset(0, 82),
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = cfg.Title or self.Name,
+		Font = FONT_BOLD,
+		TextSize = 17,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Parent = card,
+	})
+	text({
+		Position = UDim2.fromOffset(0, 104),
+		Size = UDim2.new(1, 0, 0, 14),
+		Text = cfg.Subtitle or "Carregando interface",
+		TextSize = 11,
+		TextColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		Parent = card,
+	})
+	local track = create("Frame", {
+		Position = UDim2.new(0, 24, 1, -40),
+		Size = UDim2.new(1, -48, 0, 4),
+		BackgroundColor3 = Theme.Element,
+		BorderSizePixel = 0,
+		Parent = card,
+	})
+	corner(track, 2)
+	local fill = create("Frame", {
+		Size = UDim2.fromScale(0, 1),
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+		Parent = track,
+	})
+	corner(fill, 2)
+	local status = text({
+		Position = UDim2.new(0, 24, 1, -30),
+		Size = UDim2.new(1, -48, 0, 16),
+		TextSize = 11,
+		TextColor3 = Theme.TextDim,
+		Text = "",
+		Parent = card,
+	})
+	local percent = text({
+		Position = UDim2.new(0, 24, 1, -30),
+		Size = UDim2.new(1, -48, 0, 16),
+		TextSize = 11,
+		TextColor3 = Theme.Text,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Text = "0%",
+		Parent = card,
+	})
+
+	tween(backdrop, { BackgroundTransparency = 0.45 }, 0.3)
+	tween(card, { GroupTransparency = 0 }, 0.3)
+	tween(scale, { Scale = 1 }, 0.3)
+
+	task.spawn(function()
+		-- Espera o script terminar de montar abas/elementos antes de pre-carregar os icones.
+		task.wait()
+		local duration = cfg.Duration or 2.5
+		local steps = cfg.Steps or { "Inicializando", "Carregando icones", "Montando interface", "Pronto" }
+
+		local assets, seen = {}, {}
+		for _, inst in ipairs(gui:GetDescendants()) do
+			if (inst:IsA("ImageLabel") or inst:IsA("ImageButton")) and inst.Image ~= "" and not seen[inst.Image] then
+				seen[inst.Image] = true
+				table.insert(assets, inst.Image)
+			end
+		end
+		local preloaded = false
+		task.spawn(function()
+			pcall(function()
+				game:GetService("ContentProvider"):PreloadAsync(assets)
+			end)
+			preloaded = true
+		end)
+
+		local start = os.clock()
+		while gui.Parent do
+			local elapsed = os.clock() - start
+			local t = math.clamp(elapsed / duration, 0, 1)
+			if not preloaded and elapsed < duration + 5 then
+				t = math.min(t, 0.92)
+			end
+			fill.Size = UDim2.fromScale(t, 1)
+			percent.Text = math.floor(t * 100) .. "%"
+			status.Text = steps[math.clamp(math.floor(t * #steps) + 1, 1, #steps)]
+			logo.Rotation = math.sin(elapsed * 3) * 6
+			if t >= 1 then
+				break
+			end
+			task.wait()
+		end
+		if not gui.Parent then
+			return
+		end
+
+		task.wait(0.2)
+		tween(backdrop, { BackgroundTransparency = 1 }, 0.25)
+		tween(card, { GroupTransparency = 1 }, 0.25)
+		tween(scale, { Scale = 0.9 }, 0.25)
+		task.wait(0.25)
+		backdrop:Destroy()
+		card:Destroy()
+
+		self._loading = false
+		self:Toggle(true)
+		if cfg.Callback then
+			task.spawn(cfg.Callback)
+		end
+	end)
+end
+
+function Window:_newPopup(name, props)
+	local popup = create("TextButton", {
+		Name = name,
+		Visible = false,
+		AutoButtonColor = false,
+		Text = "",
+		BackgroundColor3 = Theme.Panel,
+		BorderSizePixel = 0,
+		Active = true,
+		Parent = self.PopupLayer,
+	})
+	for key, value in pairs(props or {}) do
+		popup[key] = value
+	end
+	corner(popup, 6)
+	stroke(popup, Theme.Border)
+	-- Clique no fundo do popup fecha so os popups abertos acima dele (ex: dropdown dentro da engrenagem).
+	popup.MouseButton1Down:Connect(function()
+		local index = self:_popupIndex(popup)
+		if index then
+			self:_closePopups(index)
+		end
+	end)
+	return popup
 end
 
 function Window:_connect(connection)
@@ -1601,6 +1942,7 @@ function Window:_closePopups(keep)
 			popup.OnState(false)
 		end
 	end
+	self._blocker.Visible = #self._popups > 0
 end
 
 function Window:_closePopup(frame)
@@ -1634,7 +1976,9 @@ function Window:_togglePopup(frame, anchor, placement, onState)
 	x = math.clamp(x, 4, math.max(4, screen.X - width - 4))
 	y = math.clamp(y, 4, math.max(4, screen.Y - height - 4))
 	frame.Position = UDim2.fromOffset(x, y)
+	frame.ZIndex = 10 + #self._popups
 	frame.Visible = true
+	self._blocker.Visible = true
 
 	table.insert(self._popups, { Frame = frame, Anchor = anchor, OnState = onState })
 	if onState then
@@ -1717,9 +2061,6 @@ function Window:AddTab(name, icon, opts)
 		})
 		padding(scroll, 2, 12, 1, 1)
 		list(scroll, 12)
-		scroll:GetPropertyChangedSignal("CanvasPosition"):Connect(function()
-			self:_closePopups(0)
-		end)
 		return scroll
 	end
 	tab._left = column(UDim2.fromOffset(12, 0))
@@ -1819,13 +2160,21 @@ function Window:SetLocked(locked)
 end
 
 function Window:Toggle(visible)
+	if self._loading then
+		return
+	end
 	if visible == nil then
 		visible = not self.Main.Visible
 	end
-	self.Main.Visible = visible
-	if not visible then
+	if visible then
+		self.Main.Visible = true
+		self._scale.Scale = 0.96
+		tween(self._scale, { Scale = 1 }, 0.18)
+	else
 		self:_closePopups(0)
+		self.Main.Visible = false
 	end
+	self:_setMouseFree(visible)
 end
 
 function Window:GetConfig()
@@ -1908,6 +2257,7 @@ function Window:Destroy()
 		pcall(fn)
 	end
 	table.clear(self._unload)
+	self:_setMouseFree(false)
 	for _, connection in ipairs(self._conns) do
 		connection:Disconnect()
 	end
