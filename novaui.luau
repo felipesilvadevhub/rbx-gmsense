@@ -414,6 +414,29 @@ function Element:AddKeybind(opts)
 	kb.Mode = opts.Mode or "Toggle"
 	kb.Active = kb.Mode == "Always"
 	kb._listening = false
+	kb.ShowInList = opts.ShowInList ~= false
+	kb._order = #window._keybinds + 1
+	table.insert(window._keybinds, kb)
+
+	function kb:GetName()
+		return opts.Name or (parentEl.Label and parentEl.Label.Text) or "Keybind"
+	end
+
+	function kb:IsActive()
+		if kb.Mode == "Always" then
+			return true
+		end
+		if parentEl.Kind == "Toggle" and opts.SyncToggle ~= false and kb.Mode == "Toggle" then
+			return parentEl.Value == true
+		end
+		return kb.Active
+	end
+
+	if parentEl.Kind == "Toggle" then
+		parentEl:OnChanged(function()
+			kb:_render()
+		end)
+	end
 
 	local btn = create("TextButton", {
 		Name = "Keybind",
@@ -439,7 +462,8 @@ function Element:AddKeybind(opts)
 
 	kb._normalize = toKey
 	kb._render = function()
-		local color = (kb._listening or kb.Active) and Theme.Accent or Theme.TextDim
+		window:_refreshKeybinds()
+		local color = (kb._listening or kb:IsActive()) and Theme.Accent or Theme.TextDim
 		icon.ImageColor3 = color
 		keyText.TextColor3 = color
 		if kb._listening then
@@ -1904,6 +1928,7 @@ function Library:CreateWindow(opts)
 		_conns = {},
 		_popups = {},
 		_accentHooks = {},
+		_keybinds = {},
 		_unload = {},
 		_locked = false,
 		_loading = false,
@@ -2301,6 +2326,7 @@ function Window:_runLoader(cfg)
 
 		self._loading = false
 		self:Toggle(true)
+		self:_refreshKeybinds()
 		if cfg.Callback then
 			task.spawn(cfg.Callback)
 		end
@@ -2491,6 +2517,242 @@ function Window:AddTab(name, icon, opts)
 		bar.BackgroundColor3 = Theme.Accent
 	end)
 	return tab
+end
+
+function Window:_refreshKeybinds()
+	local kbList = self._keybindList
+	if not kbList or kbList._pending then
+		return
+	end
+	kbList._pending = true
+	task.defer(function()
+		kbList._pending = false
+		if self.Gui.Parent then
+			kbList:Refresh()
+		end
+	end)
+end
+
+function Window:AddKeybindList(opts)
+	if self._keybindList then
+		return self._keybindList
+	end
+	opts = opts or {}
+	local window = self
+	local kbList = {
+		Visible = opts.Visible ~= false,
+		ShowInactive = opts.ShowInactive == true,
+		HideWhenEmpty = opts.HideWhenEmpty == true,
+		_rows = {},
+	}
+
+	local frame = create("Frame", {
+		Name = "KeybindList",
+		Position = opts.Position or UDim2.new(0, 16, 0.35, 0),
+		Size = UDim2.fromOffset(opts.Width or 210, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundColor3 = Theme.Background,
+		BorderSizePixel = 0,
+		ZIndex = 40,
+		Parent = self.Gui,
+	})
+	corner(frame, 6)
+	stroke(frame, Theme.Border)
+	list(frame)
+	kbList.Frame = frame
+
+	local header = create("Frame", {
+		Name = "Header",
+		Size = UDim2.new(1, 0, 0, 30),
+		BackgroundTransparency = 1,
+		Parent = frame,
+	})
+	local accentLine = create("Frame", {
+		Position = UDim2.fromOffset(8, 0),
+		Size = UDim2.new(1, -16, 0, 2),
+		BackgroundColor3 = Theme.Accent,
+		BorderSizePixel = 0,
+		Parent = header,
+	})
+	corner(accentLine, 1)
+	local headerIcon = Library.Icon(opts.Icon or "keyboard", 14, {
+		AnchorPoint = Vector2.new(0, 0.5),
+		Position = UDim2.new(0, 10, 0.5, 1),
+		ImageColor3 = Theme.Accent,
+		Parent = header,
+	})
+	text({
+		Position = UDim2.fromOffset(31, 1),
+		Size = UDim2.new(1, -70, 1, 0),
+		Text = opts.Title or "Keybinds",
+		Font = FONT_BOLD,
+		TextSize = 12,
+		Parent = header,
+	})
+	local counter = text({
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -10, 0, 1),
+		Size = UDim2.new(0, 40, 1, 0),
+		Text = "0",
+		TextSize = 11,
+		TextColor3 = Theme.TextDim,
+		TextXAlignment = Enum.TextXAlignment.Right,
+		Parent = header,
+	})
+
+	create("Frame", {
+		Size = UDim2.new(1, 0, 0, 1),
+		BackgroundColor3 = Theme.Border,
+		BorderSizePixel = 0,
+		LayoutOrder = 1,
+		Parent = frame,
+	})
+
+	local body = create("Frame", {
+		Name = "Body",
+		Size = UDim2.fromScale(1, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		BackgroundTransparency = 1,
+		LayoutOrder = 2,
+		Parent = frame,
+	})
+	padding(body, 5, 6, 10, 10)
+	list(body, 2)
+
+	local empty = text({
+		Size = UDim2.new(1, 0, 0, 20),
+		Text = opts.EmptyText or "No active binds",
+		TextSize = 11,
+		TextColor3 = Theme.Header,
+		LayoutOrder = 100000,
+		Parent = body,
+	})
+
+	local function makeRow(kb)
+		local row = create("Frame", {
+			Size = UDim2.new(1, 0, 0, 20),
+			BackgroundTransparency = 1,
+			LayoutOrder = kb._order,
+			Visible = false,
+			Parent = body,
+		})
+		local name = text({
+			Size = UDim2.new(1, -90, 1, 0),
+			TextSize = 11,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Parent = row,
+		})
+		local right = create("Frame", {
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.fromScale(1, 0),
+			Size = UDim2.fromScale(0, 1),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundTransparency = 1,
+			Parent = row,
+		})
+		list(right, 5, Enum.FillDirection.Horizontal, Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Center)
+		local mode = text({
+			Size = UDim2.fromOffset(0, 14),
+			AutomaticSize = Enum.AutomaticSize.X,
+			BackgroundTransparency = 0,
+			BackgroundColor3 = Theme.Element,
+			TextSize = 9,
+			TextColor3 = Theme.TextDim,
+			Parent = right,
+		})
+		mode.BackgroundTransparency = 0
+		corner(mode, 3)
+		padding(mode, 0, 0, 5, 5)
+		local key = text({
+			Size = UDim2.fromOffset(0, 14),
+			AutomaticSize = Enum.AutomaticSize.X,
+			TextSize = 11,
+			Font = FONT_BOLD,
+			LayoutOrder = 1,
+			Parent = right,
+		})
+		return { Frame = row, Name = name, Mode = mode, Key = key, WasShown = false }
+	end
+
+	function kbList:Refresh()
+		local activeCount, shownCount = 0, 0
+		for _, kb in ipairs(window._keybinds) do
+			local row = kbList._rows[kb]
+			if not row then
+				row = makeRow(kb)
+				kbList._rows[kb] = row
+			end
+			local active = kb:IsActive()
+			local show = kb.ShowInList and kb.Value ~= nil and (active or kbList.ShowInactive)
+			if active and kb.ShowInList and kb.Value ~= nil then
+				activeCount += 1
+			end
+			row.Frame.Visible = show
+			if show then
+				shownCount += 1
+				row.Name.Text = kb:GetName()
+				row.Name.TextColor3 = active and Theme.Text or Theme.TextDim
+				row.Mode.Text = string.lower(kb.Mode)
+				row.Key.Text = "[" .. keyName(kb.Value) .. "]"
+				row.Key.TextColor3 = active and Theme.Accent or Theme.TextDim
+				if not row.WasShown then
+					row.Name.TextTransparency = 1
+					row.Key.TextTransparency = 1
+					tween(row.Name, { TextTransparency = 0 }, 0.2)
+					tween(row.Key, { TextTransparency = 0 }, 0.2)
+				end
+			end
+			row.WasShown = show
+		end
+		for kb, row in pairs(kbList._rows) do
+			if not table.find(window._keybinds, kb) then
+				row.Frame:Destroy()
+				kbList._rows[kb] = nil
+			end
+		end
+		counter.Text = tostring(activeCount)
+		empty.Visible = shownCount == 0
+		frame.Visible = kbList.Visible and not window._loading and not (kbList.HideWhenEmpty and shownCount == 0)
+	end
+
+	function kbList:SetVisible(visible)
+		kbList.Visible = visible == true
+		kbList:Refresh()
+		return kbList
+	end
+
+	function kbList:SetShowInactive(show)
+		kbList.ShowInactive = show == true
+		kbList:Refresh()
+		return kbList
+	end
+
+	function kbList:Destroy()
+		frame:Destroy()
+		window._keybindList = nil
+	end
+
+	header.InputBegan:Connect(function(input)
+		if not isPress(input) or window._locked then
+			return
+		end
+		local start = mouse()
+		local origin = frame.Position
+		trackDrag(function(pos)
+			local delta = pos - start
+			frame.Position = UDim2.new(origin.X.Scale, origin.X.Offset + delta.X, origin.Y.Scale, origin.Y.Offset + delta.Y)
+		end)
+	end)
+
+	self:_onAccent(function()
+		accentLine.BackgroundColor3 = Theme.Accent
+		headerIcon.ImageColor3 = Theme.Accent
+		kbList:Refresh()
+	end)
+
+	self._keybindList = kbList
+	kbList:Refresh()
+	return kbList
 end
 
 function Window:Notify(opts)
