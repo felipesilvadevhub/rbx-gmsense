@@ -552,16 +552,59 @@ end
 
 -- Addon: Color picker -------------------------------------------------------------------
 
+local COLOR_PRESETS = {
+	Color3.fromRGB(255, 255, 255),
+	Color3.fromRGB(239, 68, 68),
+	Color3.fromRGB(249, 115, 22),
+	Color3.fromRGB(234, 179, 8),
+	Color3.fromRGB(34, 197, 94),
+	Color3.fromRGB(6, 182, 212),
+	Color3.fromRGB(59, 130, 246),
+	Color3.fromRGB(168, 85, 247),
+}
+
+local function checker(parent, cell)
+	local holder = create("Frame", {
+		Name = "Checker",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = Color3.fromRGB(205, 205, 210),
+		BorderSizePixel = 0,
+		ClipsDescendants = true,
+		Parent = parent,
+	})
+	local w, h = parent.Size.X.Offset, parent.Size.Y.Offset
+	for cx = 0, math.ceil(w / cell) - 1 do
+		for cy = 0, math.ceil(h / cell) - 1 do
+			if (cx + cy) % 2 == 0 then
+				create("Frame", {
+					Position = UDim2.fromOffset(cx * cell, cy * cell),
+					Size = UDim2.fromOffset(cell, cell),
+					BackgroundColor3 = Color3.fromRGB(150, 150, 158),
+					BorderSizePixel = 0,
+					Parent = holder,
+				})
+			end
+		end
+	end
+	return holder
+end
+
 function Element:AddColorPicker(opts)
 	opts = opts or {}
 	local window = self.Window
+	local useAlpha = opts.Transparency ~= nil or opts.Alpha == true
 	local cp = newElement(self.Section, "ColorPicker", opts)
 	cp.Row = self.Row
 	cp.H, cp.S, cp.V = 0, 0, 1
+	cp.Transparency = math.clamp(tonumber(opts.Transparency) or 0, 0, 1)
+	cp.Rainbow = false
+	local rowLabel = self.Label
 
+	-- Botao na linha
 	local swatch = create("TextButton", {
 		Name = "ColorPicker",
-		Size = UDim2.fromOffset(20, 11),
+		Size = UDim2.fromOffset(22, 12),
+		BackgroundColor3 = Theme.Element,
 		AutoButtonColor = false,
 		Text = "",
 		ZIndex = 3,
@@ -569,16 +612,80 @@ function Element:AddColorPicker(opts)
 		Parent = self._addonTo,
 	})
 	corner(swatch, 3)
-	stroke(swatch, Theme.Border)
+	if useAlpha then
+		checker(swatch, 4)
+	end
+	local swatchFill = create("Frame", {
+		Size = UDim2.fromScale(1, 1),
+		BorderSizePixel = 0,
+		ZIndex = 2,
+		Parent = swatch,
+	})
+	corner(swatchFill, 3)
+	local swatchStroke = stroke(swatch, Theme.Border)
+	swatch.MouseEnter:Connect(function()
+		tween(swatchStroke, { Color = Theme.Accent }, 0.1)
+	end)
+	swatch.MouseLeave:Connect(function()
+		tween(swatchStroke, { Color = Theme.Border }, 0.1)
+	end)
 
-	local popup = window:_newPopup("ColorPopup", { Size = UDim2.fromOffset(192, 168) })
+	-- Popup
+	local WIDTH = 226
+	local INNER = WIDTH - 20
+	local popup = window:_newPopup("ColorPopup", { Size = UDim2.fromOffset(WIDTH, 0) })
+	local y = 10
 
+	text({
+		Position = UDim2.fromOffset(10, y),
+		Size = UDim2.new(1, -90, 0, 18),
+		Text = opts.Title or (rowLabel and rowLabel.Text ~= "" and rowLabel.Text) or "Color",
+		Font = FONT_BOLD,
+		TextSize = 12,
+		TextTruncate = Enum.TextTruncate.AtEnd,
+		Parent = popup,
+	})
+
+	local function previewBox(xFromRight)
+		local box = create("TextButton", {
+			AnchorPoint = Vector2.new(1, 0),
+			Position = UDim2.new(1, xFromRight, 0, y + 2),
+			Size = UDim2.fromOffset(28, 14),
+			BackgroundColor3 = Theme.Element,
+			AutoButtonColor = false,
+			Text = "",
+			Parent = popup,
+		})
+		corner(box, 3)
+		if useAlpha then
+			checker(box, 4)
+		end
+		local fill = create("Frame", { Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, ZIndex = 2, Parent = box })
+		corner(fill, 3)
+		stroke(box, Theme.Border)
+		return box, fill
+	end
+	local originalBtn, originalFill = previewBox(-42)
+	local _, currentFill = previewBox(-10)
+	Library.Icon("rotate-ccw", 10, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		ImageColor3 = Color3.new(1, 1, 1),
+		ImageTransparency = 1,
+		ZIndex = 3,
+		Parent = originalBtn,
+	})
+	y += 26
+
+	-- Saturacao/brilho + matiz
+	local SV_H = 132
 	local sv = create("TextButton", {
-		Position = UDim2.fromOffset(8, 8),
-		Size = UDim2.fromOffset(150, 122),
+		Position = UDim2.fromOffset(10, y),
+		Size = UDim2.fromOffset(INNER - 26, SV_H),
 		AutoButtonColor = false,
 		Text = "",
 		BorderSizePixel = 0,
+		ClipsDescendants = true,
 		Parent = popup,
 	})
 	corner(sv, 4)
@@ -590,21 +697,21 @@ function Element:AddColorPicker(opts)
 	create("UIGradient", { Transparency = NumberSequence.new(1, 0), Rotation = 90, Parent = black })
 	local svCursor = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Size = UDim2.fromOffset(8, 8),
-		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(12, 12),
+		BorderSizePixel = 0,
 		ZIndex = 2,
 		Parent = sv,
 	})
-	corner(svCursor, 4)
-	stroke(svCursor, Color3.new(1, 1, 1), 0, 1.5)
+	corner(svCursor, 6)
+	stroke(svCursor, Color3.new(1, 1, 1), 0, 2)
 
 	local rainbow = {}
 	for i = 0, 6 do
 		table.insert(rainbow, ColorSequenceKeypoint.new(i / 6, Color3.fromHSV(i / 6 % 1, 1, 1)))
 	end
 	local hue = create("TextButton", {
-		Position = UDim2.fromOffset(166, 8),
-		Size = UDim2.fromOffset(18, 122),
+		Position = UDim2.fromOffset(10 + INNER - 18, y),
+		Size = UDim2.fromOffset(18, SV_H),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		AutoButtonColor = false,
 		Text = "",
@@ -615,49 +722,234 @@ function Element:AddColorPicker(opts)
 	create("UIGradient", { Color = ColorSequence.new(rainbow), Rotation = 90, Parent = hue })
 	local hueCursor = create("Frame", {
 		AnchorPoint = Vector2.new(0.5, 0.5),
-		Size = UDim2.new(1, 4, 0, 3),
+		Size = UDim2.new(1, 4, 0, 4),
 		BackgroundColor3 = Color3.new(1, 1, 1),
 		BorderSizePixel = 0,
+		ZIndex = 2,
 		Parent = hue,
 	})
 	corner(hueCursor, 2)
+	stroke(hueCursor, Color3.new(0, 0, 0), 0.6)
+	y += SV_H + 8
 
-	local hex = create("TextBox", {
-		Position = UDim2.fromOffset(8, 138),
-		Size = UDim2.new(1, -16, 0, 22),
-		BackgroundColor3 = Theme.Element,
-		BorderSizePixel = 0,
-		Font = FONT,
-		TextSize = 11,
-		TextColor3 = Theme.Text,
-		ClearTextOnFocus = false,
-		Text = "",
-		Parent = popup,
-	})
-	corner(hex, 4)
+	-- Transparencia (opcional)
+	local alphaBar, alphaFill, alphaCursor
+	if useAlpha then
+		alphaBar = create("TextButton", {
+			Position = UDim2.fromOffset(10, y),
+			Size = UDim2.fromOffset(INNER, 12),
+			BackgroundColor3 = Theme.Element,
+			AutoButtonColor = false,
+			Text = "",
+			BorderSizePixel = 0,
+			Parent = popup,
+		})
+		corner(alphaBar, 4)
+		corner(checker(alphaBar, 6), 4)
+		alphaFill = create("Frame", { Size = UDim2.fromScale(1, 1), BorderSizePixel = 0, ZIndex = 2, Parent = alphaBar })
+		corner(alphaFill, 4)
+		create("UIGradient", { Transparency = NumberSequence.new(1, 0), Parent = alphaFill })
+		alphaCursor = create("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Size = UDim2.new(0, 4, 1, 4),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			ZIndex = 3,
+			Parent = alphaBar,
+		})
+		corner(alphaCursor, 2)
+		stroke(alphaCursor, Color3.new(0, 0, 0), 0.6)
+		y += 12 + 8
+	end
 
+	-- Campos
+	local function field(x, fy, w, tag)
+		local holder = create("Frame", {
+			Position = UDim2.fromOffset(x, fy),
+			Size = UDim2.fromOffset(w, 22),
+			BackgroundColor3 = Theme.Element,
+			BorderSizePixel = 0,
+			Parent = popup,
+		})
+		corner(holder, 4)
+		local outline = stroke(holder, Theme.Border)
+		text({
+			Position = UDim2.fromOffset(6, 0),
+			Size = UDim2.new(0, 10, 1, 0),
+			Text = tag,
+			Font = FONT_BOLD,
+			TextSize = 10,
+			TextColor3 = Theme.TextDim,
+			Parent = holder,
+		})
+		local box = create("TextBox", {
+			Position = UDim2.fromOffset(17, 0),
+			Size = UDim2.new(1, -21, 1, 0),
+			BackgroundTransparency = 1,
+			Font = FONT,
+			TextSize = 11,
+			TextColor3 = Theme.Text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			ClearTextOnFocus = false,
+			Text = "",
+			Parent = holder,
+		})
+		box.Focused:Connect(function()
+			tween(outline, { Color = Theme.Accent }, 0.1)
+		end)
+		box.FocusLost:Connect(function()
+			tween(outline, { Color = Theme.Border }, 0.1)
+		end)
+		return box
+	end
+
+	local function iconButton(x, fy, icon)
+		local btn = create("TextButton", {
+			Position = UDim2.fromOffset(x, fy),
+			Size = UDim2.fromOffset(22, 22),
+			BackgroundColor3 = Theme.Element,
+			AutoButtonColor = false,
+			Text = "",
+			BorderSizePixel = 0,
+			Parent = popup,
+		})
+		corner(btn, 4)
+		local outline = stroke(btn, Theme.Border)
+		local img = Library.Icon(icon, 12, {
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			Position = UDim2.fromScale(0.5, 0.5),
+			ImageColor3 = Theme.TextDim,
+			Parent = btn,
+		})
+		btn.MouseEnter:Connect(function()
+			tween(img, { ImageColor3 = Theme.Text }, 0.1)
+		end)
+		btn.MouseLeave:Connect(function()
+			tween(img, { ImageColor3 = Theme.TextDim }, 0.1)
+		end)
+		return btn, img, outline
+	end
+
+	local hexBox = field(10, y, INNER - 52, "#")
+	local copyBtn, copyIcon = iconButton(10 + INNER - 48, y, "copy")
+	local pasteBtn = iconButton(10 + INNER - 22, y, "clipboard-paste")
+	y += 22 + 6
+
+	local channels = useAlpha and { "R", "G", "B", "A" } or { "R", "G", "B" }
+	local gap = 4
+	local fieldWidth = math.floor((INNER - gap * (#channels - 1)) / #channels)
+	local channelBoxes = {}
+	for i, tag in ipairs(channels) do
+		channelBoxes[tag] = field(10 + (i - 1) * (fieldWidth + gap), y, fieldWidth, tag)
+	end
+	y += 22 + 8
+
+	-- Presets + rainbow
+	local PRESET = 18
+	local presetGap = math.floor((INNER - PRESET * (#COLOR_PRESETS + 1)) / #COLOR_PRESETS)
+	for i, color in ipairs(COLOR_PRESETS) do
+		local preset = create("TextButton", {
+			Position = UDim2.fromOffset(10 + (i - 1) * (PRESET + presetGap), y),
+			Size = UDim2.fromOffset(PRESET, PRESET),
+			BackgroundColor3 = color,
+			AutoButtonColor = false,
+			Text = "",
+			BorderSizePixel = 0,
+			Parent = popup,
+		})
+		corner(preset, 4)
+		local outline = stroke(preset, Theme.Border)
+		preset.MouseEnter:Connect(function()
+			tween(outline, { Color = Theme.Text }, 0.1)
+		end)
+		preset.MouseLeave:Connect(function()
+			tween(outline, { Color = Theme.Border }, 0.1)
+		end)
+		preset.Activated:Connect(function()
+			cp:SetRainbow(false)
+			cp:Set(color)
+		end)
+	end
+	local rainbowBtn, rainbowIcon, rainbowOutline = iconButton(10 + INNER - PRESET, y, "rainbow")
+	rainbowBtn.Size = UDim2.fromOffset(PRESET, PRESET)
+	y += PRESET + 10
+
+	popup.Size = UDim2.fromOffset(WIDTH, y)
+
+	-- Logica
 	local fromHSV = false
 	cp._normalize = function(value)
 		if typeof(value) == "Color3" then
 			return value
 		end
 		if type(value) == "string" then
-			local ok, color = pcall(Color3.fromHex, value)
+			local hex = string.gsub(value, "[^%x]", "")
+			if #hex == 3 then
+				hex = string.gsub(hex, "%x", "%0%0")
+			end
+			local ok, color = pcall(Color3.fromHex, hex)
 			if ok then
 				return color
 			end
 		end
 		return cp.Value or Color3.new(1, 1, 1)
 	end
+
+	local function channelValue(value)
+		return math.floor(value * 255 + 0.5)
+	end
+
 	cp._render = function()
+		local color = cp.Value
 		if not fromHSV then
-			cp.H, cp.S, cp.V = cp.Value:ToHSV()
+			local h, s, v = color:ToHSV()
+			if s > 0 and v > 0 then
+				cp.H = h
+			end
+			cp.S, cp.V = s, v
 		end
-		swatch.BackgroundColor3 = cp.Value
+		swatchFill.BackgroundColor3 = color
+		swatchFill.BackgroundTransparency = cp.Transparency
+		currentFill.BackgroundColor3 = color
+		currentFill.BackgroundTransparency = cp.Transparency
 		sv.BackgroundColor3 = Color3.fromHSV(cp.H, 1, 1)
 		svCursor.Position = UDim2.fromScale(cp.S, 1 - cp.V)
+		svCursor.BackgroundColor3 = color
 		hueCursor.Position = UDim2.new(0.5, 0, cp.H, 0)
-		hex.Text = "#" .. string.upper(cp.Value:ToHex())
+		if alphaFill then
+			alphaFill.BackgroundColor3 = color
+			alphaCursor.Position = UDim2.new(1 - cp.Transparency, 0, 0.5, 0)
+		end
+		if not hexBox:IsFocused() then
+			hexBox.Text = string.upper(color:ToHex())
+		end
+		local values = { R = channelValue(color.R), G = channelValue(color.G), B = channelValue(color.B) }
+		for tag, box in pairs(channelBoxes) do
+			if not box:IsFocused() then
+				if tag == "A" then
+					box.Text = tostring(math.floor((1 - cp.Transparency) * 100 + 0.5))
+				else
+					box.Text = tostring(values[tag])
+				end
+			end
+		end
+	end
+
+	function cp:_fire()
+		for _, fn in ipairs(self._callbacks) do
+			task.spawn(fn, self.Value, self.Transparency)
+		end
+	end
+
+	function cp:SetTransparency(value, silent)
+		value = math.clamp(tonumber(value) or 0, 0, 1)
+		local changed = value ~= cp.Transparency
+		cp.Transparency = value
+		cp:_render()
+		if changed and not silent then
+			cp:_fire()
+		end
+		return cp
 	end
 
 	local function setHSV()
@@ -666,8 +958,37 @@ function Element:AddColorPicker(opts)
 		fromHSV = false
 	end
 
+	local rainbowConn
+	function cp:SetRainbow(on)
+		on = on == true
+		if on == cp.Rainbow then
+			return cp
+		end
+		cp.Rainbow = on
+		if rainbowConn then
+			rainbowConn:Disconnect()
+			rainbowConn = nil
+		end
+		if on then
+			if cp.S < 0.1 then
+				cp.S = 1
+			end
+			if cp.V < 0.1 then
+				cp.V = 1
+			end
+			rainbowConn = window:_connect(RunService.Heartbeat:Connect(function()
+				cp.H = (os.clock() * (opts.RainbowSpeed or 0.2)) % 1
+				setHSV()
+			end))
+		end
+		rainbowIcon.ImageColor3 = on and Theme.Accent or Theme.TextDim
+		rainbowOutline.Color = on and Theme.Accent or Theme.Border
+		return cp
+	end
+
 	sv.InputBegan:Connect(function(input)
 		if isPress(input) then
+			cp:SetRainbow(false)
 			trackDrag(function(pos)
 				cp.S = math.clamp((pos.X - sv.AbsolutePosition.X) / sv.AbsoluteSize.X, 0, 1)
 				cp.V = 1 - math.clamp((pos.Y - sv.AbsolutePosition.Y) / sv.AbsoluteSize.Y, 0, 1)
@@ -677,25 +998,121 @@ function Element:AddColorPicker(opts)
 	end)
 	hue.InputBegan:Connect(function(input)
 		if isPress(input) then
+			cp:SetRainbow(false)
 			trackDrag(function(pos)
 				cp.H = math.clamp((pos.Y - hue.AbsolutePosition.Y) / hue.AbsoluteSize.Y, 0, 0.999)
 				setHSV()
 			end)
 		end
 	end)
-	hex.FocusLost:Connect(function()
-		cp:Set(hex.Text)
+	if alphaBar then
+		alphaBar.InputBegan:Connect(function(input)
+			if isPress(input) then
+				trackDrag(function(pos)
+					local p = math.clamp((pos.X - alphaBar.AbsolutePosition.X) / alphaBar.AbsoluteSize.X, 0, 1)
+					cp:SetTransparency(1 - round(p, 2))
+				end)
+			end
+		end)
+	end
+
+	hexBox.FocusLost:Connect(function()
+		cp:SetRainbow(false)
+		cp:Set(hexBox.Text)
 		cp:_render()
+	end)
+	for tag, box in pairs(channelBoxes) do
+		box.FocusLost:Connect(function()
+			local n = tonumber((string.gsub(box.Text, "[^%d%.]", "")))
+			if n then
+				if tag == "A" then
+					cp:SetTransparency(1 - math.clamp(n, 0, 100) / 100)
+				else
+					cp:SetRainbow(false)
+					local c = cp.Value
+					local r, g, b = channelValue(c.R), channelValue(c.G), channelValue(c.B)
+					n = math.clamp(math.floor(n), 0, 255)
+					if tag == "R" then
+						r = n
+					elseif tag == "G" then
+						g = n
+					else
+						b = n
+					end
+					cp:Set(Color3.fromRGB(r, g, b))
+				end
+			end
+			cp:_render()
+		end)
+	end
+
+	copyBtn.Activated:Connect(function()
+		Library._colorClipboard = { Color = cp.Value, Transparency = cp.Transparency }
+		pcall(function()
+			if setclipboard then
+				setclipboard("#" .. string.upper(cp.Value:ToHex()))
+			end
+		end)
+		applyIcon(copyIcon, "check")
+		copyIcon.ImageColor3 = Theme.Accent
+		task.delay(1, function()
+			applyIcon(copyIcon, "copy")
+			copyIcon.ImageColor3 = Theme.TextDim
+		end)
+	end)
+	pasteBtn.Activated:Connect(function()
+		local clip = Library._colorClipboard
+		if clip then
+			cp:SetRainbow(false)
+			cp:Set(clip.Color)
+			if useAlpha then
+				cp:SetTransparency(clip.Transparency)
+			end
+		end
+	end)
+	rainbowBtn.Activated:Connect(function()
+		cp:SetRainbow(not cp.Rainbow)
+	end)
+
+	local original = { Color = Color3.new(1, 1, 1), Transparency = 0 }
+	originalBtn.Activated:Connect(function()
+		cp:SetRainbow(false)
+		cp:Set(original.Color)
+		cp:SetTransparency(original.Transparency)
+	end)
+	local revertIcon = originalBtn:FindFirstChild("Icon")
+	originalBtn.MouseEnter:Connect(function()
+		tween(revertIcon, { ImageTransparency = 0 }, 0.1)
+	end)
+	originalBtn.MouseLeave:Connect(function()
+		tween(revertIcon, { ImageTransparency = 1 }, 0.1)
 	end)
 
 	swatch.Activated:Connect(function()
-		if cp._enabled then
-			window:_togglePopup(popup, swatch, "Below")
+		if not cp._enabled then
+			return
 		end
+		window:_togglePopup(popup, swatch, "Below", function(open)
+			if open then
+				original.Color, original.Transparency = cp.Value, cp.Transparency
+				originalFill.BackgroundColor3 = cp.Value
+				originalFill.BackgroundTransparency = cp.Transparency
+			end
+		end)
 	end)
 
 	function cp:Serialize()
-		return cp.Value:ToHex()
+		return { Color = cp.Value:ToHex(), Transparency = cp.Transparency, Rainbow = cp.Rainbow }
+	end
+
+	function cp:Deserialize(value)
+		if type(value) == "table" then
+			cp:Set(value.Color)
+			cp:SetTransparency(value.Transparency or 0)
+			cp:SetRainbow(value.Rainbow)
+		else
+			cp:Set(value)
+		end
 	end
 
 	cp:Set(opts.Default or Color3.new(1, 1, 1), true)
